@@ -854,12 +854,11 @@ class KGEntity(Base):
         NullFilteredString, nullable=True, index=True
     )
 
-    # Data for normalization and clustering
     clustering_name: Mapped[str] = mapped_column(
         NullFilteredString, nullable=True, index=True
-    )
+    )  # normalization_name = clustering_name - non-alphanumeric characters
 
-    clustering_trigrams: Mapped[list[str]] = mapped_column(
+    normalization_trigrams: Mapped[list[str]] = mapped_column(
         postgresql.ARRAY(String(3)),
         nullable=True,
     )
@@ -938,11 +937,6 @@ class KGEntityExtractionStaging(Base):
     )
 
     document_id: Mapped[str | None] = mapped_column(
-        NullFilteredString, nullable=True, index=True
-    )
-
-    # Data for normalization and clustering
-    clustering_name: Mapped[str] = mapped_column(
         NullFilteredString, nullable=True, index=True
     )
 

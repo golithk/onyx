@@ -247,7 +247,9 @@ def upgrade() -> None:
         ),
         # Add clustering columns
         sa.Column("clustering_name", NullFilteredString, nullable=True),
-        sa.Column("clustering_trigrams", postgresql.ARRAY(sa.String(3)), nullable=True),
+        sa.Column(
+            "normalization_trigrams", postgresql.ARRAY(sa.String(3)), nullable=True
+        ),
         sa.ForeignKeyConstraint(["entity_type_id_name"], ["kg_entity_type.id_name"]),
         sa.ForeignKeyConstraint(["document_id"], ["document.id"]),
     )
@@ -293,7 +295,6 @@ def upgrade() -> None:
         sa.Column(
             "time_created", sa.DateTime(timezone=True), server_default=sa.text("now()")
         ),
-        sa.Column("clustering_name", NullFilteredString, nullable=True),
         sa.ForeignKeyConstraint(["entity_type_id_name"], ["kg_entity_type.id_name"]),
         sa.ForeignKeyConstraint(["document_id"], ["document.id"]),
     )
@@ -442,131 +443,96 @@ def upgrade() -> None:
     op.execute("COMMIT")
     op.execute(
         "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kg_entity_clustering_trigrams "
-        "ON kg_entity USING GIN (clustering_trigrams)"
+        "ON kg_entity USING GIN (clustering_name gin_trgm_ops)"
     )
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kg_entity_extraction_clustering_trigrams "
-        "ON kg_entity_extraction_staging USING GIN (clustering_name gin_trgm_ops)"
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kg_entity_normalization_trigrams "
+        "ON kg_entity USING GIN (normalization_trigrams)"
     )
 
-    # Create trigger to update clustering columns if entity w/ doc_id is created
+    # Create kg_entity trigger to update clustering_name and normalization_trigrams
     alphanum_pattern = r"[^a-z0-9]+"
+    function = "update_kg_entity_cluster_norm"
     op.execute(
         f"""
-        CREATE OR REPLACE FUNCTION update_kg_entity_clustering()
+        CREATE OR REPLACE FUNCTION {function}()
         RETURNS TRIGGER AS $$
         DECLARE
             doc_semantic_id text;
-            cleaned_semantic_id text;
+            clustering_name text;
+            normalization_name text;
         BEGIN
             -- Get semantic_id from document
             SELECT semantic_id INTO doc_semantic_id
             FROM document
             WHERE id = NEW.document_id;
 
-            -- Clean the semantic_id with regex patterns
-            cleaned_semantic_id = regexp_replace(
-                lower(COALESCE(doc_semantic_id, NEW.name)),
+            -- Get clustering and normalization names
+            clustering_name = lower(COALESCE(doc_semantic_id, NEW.name));
+            normalization_name = regexp_replace(
+                clustering_name,
                 '{alphanum_pattern}', '', 'g'
             );
 
-            -- Set clustering_name to cleaned version and generate trigrams
-            NEW.clustering_name = cleaned_semantic_id;
-            NEW.clustering_trigrams = show_trgm(cleaned_semantic_id);
+            -- Set clustering_name and normalization_trigrams
+            NEW.clustering_name = clustering_name;
+            NEW.normalization_trigrams = show_trgm(normalization_name);
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
         """
     )
-    op.execute(
-        """
-        CREATE OR REPLACE FUNCTION update_kg_entity_extraction_clustering()
-        RETURNS TRIGGER AS $$
-        DECLARE
-            doc_semantic_id text;
-        BEGIN
-            -- Get semantic_id from document
-            SELECT semantic_id INTO doc_semantic_id
-            FROM document
-            WHERE id = NEW.document_id;
-
-            -- Set clustering_name to semantic_id
-            NEW.clustering_name = lower(COALESCE(doc_semantic_id, NEW.name));
-            RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-        """
-    )
-    for table, function in (
-        ("kg_entity", "update_kg_entity_clustering"),
-        ("kg_entity_extraction_staging", "update_kg_entity_extraction_clustering"),
-    ):
-        trigger = f"{function}_trigger"
-        op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON {table}")
-        op.execute(
-            f"""
-            CREATE TRIGGER {trigger}
-                BEFORE INSERT
-                ON {table}
-                FOR EACH ROW
-                EXECUTE FUNCTION {function}();
-            """
-        )
-
-    # Create trigger to update kg_entity clustering_name and its trigrams when document.clustering_name changes
+    trigger = f"{function}_trigger"
+    op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON kg_entity")
     op.execute(
         f"""
-        CREATE OR REPLACE FUNCTION update_kg_entity_clustering_from_doc()
+        CREATE TRIGGER {trigger}
+            BEFORE INSERT OR UPDATE OF document_id
+            ON kg_entity
+            FOR EACH ROW
+            EXECUTE FUNCTION {function}();
+        """
+    )
+
+    # Create document trigger to update clustering_name and normalization_trigrams
+    function = "update_kg_entity_cluster_norm_from_doc"
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION {function}()
         RETURNS TRIGGER AS $$
         DECLARE
-            cleaned_semantic_id text;
+            clustering_name text;
+            normalization_name text;
         BEGIN
-            -- Clean the semantic_id with regex patterns
-            cleaned_semantic_id = regexp_replace(
-                lower(COALESCE(NEW.semantic_id, '')),
+            -- Get clustering and normalization names
+            clustering_name = lower(COALESCE(NEW.semantic_id, ''));
+            normalization_name = regexp_replace(
+                clustering_name,
                 '{alphanum_pattern}', '', 'g'
             );
 
-            -- Update clustering name and trigrams for all entities referencing this document
+            -- Set clustering_name and normalization_trigrams
             UPDATE kg_entity
             SET
-                clustering_name = cleaned_semantic_id,
-                clustering_trigrams = show_trgm(cleaned_semantic_id)
+                clustering_name = clustering_name,
+                normalization_trigrams = show_trgm(normalization_name)
             WHERE document_id = NEW.id;
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
         """
     )
+    trigger = f"{function}_trigger"
+    op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON document")
     op.execute(
-        """
-        CREATE OR REPLACE FUNCTION update_kg_entity_extraction_clustering_from_doc()
-        RETURNS TRIGGER AS $$
-        BEGIN
-            UPDATE kg_entity_extraction_staging
-            SET
-                clustering_name = lower(COALESCE(NEW.semantic_id, ''))
-            WHERE document_id = NEW.id;
-            RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
+        f"""
+        CREATE TRIGGER {trigger}
+            AFTER UPDATE OF semantic_id
+            ON document
+            FOR EACH ROW
+            EXECUTE FUNCTION {function}();
         """
     )
-    for function in (
-        "update_kg_entity_clustering_from_doc",
-        "update_kg_entity_extraction_clustering_from_doc",
-    ):
-        trigger = f"{function}_trigger"
-        op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON document")
-        op.execute(
-            f"""
-            CREATE TRIGGER {trigger}
-                AFTER UPDATE OF semantic_id
-                ON document
-                FOR EACH ROW
-                EXECUTE FUNCTION {function}();
-            """
-        )
 
 
 def downgrade() -> None:
@@ -589,10 +555,8 @@ def downgrade() -> None:
 
     # Drop triggers and functions
     for table, function in (
-        ("kg_entity", "update_kg_entity_clustering"),
-        ("kg_entity_extraction_staging", "update_kg_entity_extraction_clustering"),
-        ("document", "update_kg_entity_clustering_from_doc"),
-        ("document", "update_kg_entity_extraction_clustering_from_doc"),
+        ("kg_entity", "update_kg_entity_cluster_norm"),
+        ("document", "update_kg_entity_cluster_norm_from_doc"),
     ):
         op.execute(f"DROP TRIGGER IF EXISTS {function}_trigger ON {table}")
         op.execute(f"DROP FUNCTION IF EXISTS {function}()")
@@ -600,9 +564,7 @@ def downgrade() -> None:
     # Drop index
     op.execute("COMMIT")  # Commit to allow CONCURRENTLY
     op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kg_entity_clustering_trigrams")
-    op.execute(
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_kg_entity_extraction_clustering_trigrams"
-    )
+    op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_kg_entity_normalization_trigrams")
 
     # Drop tables in reverse order of creation to handle dependencies
     op.drop_table("kg_term")
