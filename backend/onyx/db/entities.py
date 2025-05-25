@@ -15,9 +15,10 @@ from onyx.db.models import KGEntityExtractionStaging
 from onyx.db.models import KGEntityType
 from onyx.kg.models import KGGroundingType
 from onyx.kg.models import KGStage
+from onyx.kg.utils.formatting_utils import format_entity
 
 
-def add_entity(
+def add_or_update_entity(
     db_session: Session,
     kg_stage: KGStage,
     entity_type: str,
@@ -42,7 +43,7 @@ def add_entity(
     """
     entity_type = entity_type.upper()
     name = name.title()
-    id_name = f"{entity_type}::{name}"
+    id_name = format_entity(f"{entity_type}::{name}")
     alternative_names = alternative_names or []
 
     _KGEntityObject: Type[KGEntity | KGEntityExtractionStaging]

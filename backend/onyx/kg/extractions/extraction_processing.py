@@ -14,7 +14,7 @@ from onyx.db.document import get_unprocessed_kg_document_batch_for_connector
 from onyx.db.document import update_document_kg_info
 from onyx.db.document import update_document_kg_stage
 from onyx.db.engine import get_session_with_current_tenant
-from onyx.db.entities import add_entity
+from onyx.db.entities import add_or_update_entity
 from onyx.db.entities import delete_from_kg_entities__no_commit
 from onyx.db.entity_type import get_entity_types
 from onyx.db.kg_config import get_kg_config_settings
@@ -848,7 +848,7 @@ def kg_extraction(
                             not in aggregated_kg_extractions.grounded_entities_document_ids
                         ):
                             # Ungrounded entities
-                            add_entity(
+                            add_or_update_entity(
                                 db_session=db_session,
                                 kg_stage=KGStage.EXTRACTED,
                                 entity_type=entity_type,
@@ -907,7 +907,7 @@ def kg_extraction(
                                         }
                                     )
 
-                            add_entity(
+                            add_or_update_entity(
                                 db_session=db_session,
                                 kg_stage=KGStage.EXTRACTED,
                                 entity_type=entity_type,

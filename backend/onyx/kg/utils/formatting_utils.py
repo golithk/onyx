@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 
 from onyx.db.kg_config import KGConfigSettings
@@ -8,7 +9,10 @@ from onyx.kg.models import KGPerson
 def format_entity(entity: str) -> str:
     if len(entity.split("::")) == 2:
         entity_type, entity_name = entity.split("::")
-        return f"{entity_type.upper()}::{entity_name.title()}"
+        # remove non alphanumeric characters and ensure there's only one underscore at most
+        entity_name = re.sub(r"[^a-zA-Z0-9 _]", "", entity_name)
+        entity_name = re.sub(r"[\s_]+", "_", entity_name.title())
+        return f"{entity_type.upper()}::{entity_name}"
     else:
         return entity
 

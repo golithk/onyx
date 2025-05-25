@@ -1,5 +1,4 @@
 from typing import cast
-from typing import Set
 
 from rapidfuzz.fuzz import ratio
 from sqlalchemy import text
@@ -8,8 +7,9 @@ from onyx.configs.kg_configs import KG_CLUSTERING_RETRIVE_THRESHOLD
 from onyx.configs.kg_configs import KG_CLUSTERING_THRESHOLD
 from onyx.db.document import update_document_kg_info
 from onyx.db.engine import get_session_with_current_tenant
-from onyx.db.entities import add_entity
+from onyx.db.entities import add_or_update_entity
 from onyx.db.entities import delete_entities_by_id_names
+from onyx.db.entities import Document
 from onyx.db.entities import get_entities_by_grounding
 from onyx.db.entities import KGEntity
 from onyx.db.entities import KGEntityExtractionStaging
@@ -26,6 +26,97 @@ from onyx.utils.logger import setup_logger
 # from sklearn.cluster import SpectralClustering  # type: ignore
 
 logger = setup_logger()
+
+
+def _transfer_one_grounded_entity(
+    entity: KGEntityExtractionStaging,
+) -> str | None:
+    """
+    Transfer a single grounded KGEntityExtractionStaging to KGEntity.
+    The entity will be merged with another KGEntity if it is sufficiently similar.
+    The representative of the cluster will be the one with the document_id, unless
+    none of the staging entities in the cluster have a document_id.
+
+    Returns the id_name of the added/updated entity if successful, otherwise None.
+    """
+    # find candidates to match against
+    with get_session_with_current_tenant() as db_session:
+        # get clustering_name and filtering conditions
+        if entity.document_id is None:
+            entity_clustering_name = entity.name.lower()
+            filters = []  # can match with any KGEntity
+        else:
+            entity_clustering_name: str = (
+                db_session.query(Document.semantic_id)
+                .filter(Document.id == entity.document_id)
+                .scalar()
+            ).lower()
+            # can only match with entities without a document_id
+            filters = [KGEntity.document_id.is_(None)]
+
+        # find entities with a similar name to merge with
+        similar_entities = []
+        if not any(char.isdigit() for char in entity_clustering_name):
+            db_session.execute(
+                text(
+                    f"SET pg_trgm.similarity_threshold = {KG_CLUSTERING_RETRIVE_THRESHOLD}"
+                )
+            )
+            similar_entities = (
+                db_session.query(KGEntity)
+                .filter(
+                    # find entities of the same type with a similar name
+                    *filters,
+                    KGEntity.entity_type_id_name == entity.entity_type_id_name,
+                    KGEntity.clustering_name.op("%")(entity_clustering_name),
+                )
+                .all()
+            )
+
+    # assign them to the nearest cluster if we're confident they're the same entity
+    best_score = -1.0
+    best_entity = None
+    for similar in similar_entities:
+        # skip those with numbers so we don't cluster version1 and version2, etc.
+        if any(char.isdigit() for char in similar.clustering_name):
+            continue
+        score = ratio(similar.clustering_name, entity_clustering_name)
+        if score >= KG_CLUSTERING_THRESHOLD * 100 and score > best_score:
+            best_score = score
+            best_entity = similar
+
+    with get_session_with_current_tenant() as db_session:
+        entity_name = entity.name
+        entity_type = entity.entity_type_id_name
+        entity_document_id = entity.document_id
+        entity_occurrences = entity.occurrences or 1
+        entity_attributes = entity.attributes or {}
+        entity_alternative_names = set(entity.alternative_names or [])
+
+        # if we found a match, update the existing entity
+        if best_entity:
+            logger.info(f"Merging {entity.id_name} with {best_entity.id_name}")
+            entity_name = best_entity.name
+            entity_document_id = best_entity.document_id or entity_document_id
+            entity_occurrences += best_entity.occurrences or 1
+            entity_attributes.update(best_entity.attributes or {})
+            entity_alternative_names.update(best_entity.alternative_names or [])
+            entity_alternative_names.add(entity.name)
+
+        # create/update the entity
+        transferred_entity = add_or_update_entity(
+            db_session=db_session,
+            kg_stage=KGStage.NORMALIZED,
+            entity_type=entity_type,
+            name=entity_name,
+            document_id=entity_document_id,
+            occurrences=entity_occurrences,
+            attributes=entity_attributes,
+            alternative_names=list(entity_alternative_names),
+        )
+        db_session.commit()
+
+    return transferred_entity.id_name if transferred_entity else None
 
 
 def kg_clustering(
@@ -77,105 +168,11 @@ def kg_clustering(
     cluster_translations: dict[str, str] = {}
 
     # transfer the initial grounded entities
-    unclustered_grounded_entities: list[KGEntityExtractionStaging] = []
     for entity in grounded_entities:
-        # save entities without a document_id to cluster later
-        if entity.document_id is None:
-            unclustered_grounded_entities.append(entity)
-            continue
-
-        # add the entities with a document_id
-        with get_session_with_current_tenant() as db_session:
-            added_entity = add_entity(
-                db_session,
-                KGStage.NORMALIZED,
-                entity_type=entity.entity_type_id_name,
-                name=entity.name,
-                document_id=entity.document_id,
-                occurrences=entity.occurrences or 1,
-                attributes=entity.attributes,
-                alternative_names=entity.alternative_names or [],
-            )
-            if added_entity:
-                transferred_entities.append(added_entity.id_name)
-            db_session.commit()
-
-    # cluster the entities without a document_id
-    remaining_grounded_entities: list[KGEntityExtractionStaging] = []
-    for entity in unclustered_grounded_entities:
-        # find potential cluster candidates, uses GIN index, very efficient
-        with get_session_with_current_tenant() as db_session:
-            db_session.execute(
-                text(
-                    f"SET pg_trgm.similarity_threshold = {KG_CLUSTERING_RETRIVE_THRESHOLD}"
-                )
-            )
-            similar_entities = (
-                db_session.query(KGEntityExtractionStaging)
-                .filter(
-                    # find from clustered_grounded_entities
-                    # entities of the same entity type with a similar name
-                    KGEntityExtractionStaging.document_id.is_not(None),
-                    KGEntityExtractionStaging.entity_type_id_name
-                    == entity.entity_type_id_name,
-                    KGEntityExtractionStaging.clustering_name.op("%")(
-                        entity.clustering_name
-                    ),
-                )
-                .all()
-            )
-
-        # assign them to the nearest cluster if we're confident they're the same entity
-        best_score = -1.0
-        best_entity = None
-        for similar in similar_entities:
-            # skip those with numbers so we don't cluster version1 and version2, etc.
-            if any(char.isdigit() for char in similar.clustering_name):
-                continue
-            score = ratio(similar.clustering_name, entity.clustering_name)
-            if score >= KG_CLUSTERING_THRESHOLD and score > best_score:
-                best_score = score
-                best_entity = similar
-
-        if best_entity:
-            # update the cluster entity's occurence and alternative names
-            with get_session_with_current_tenant() as db_session:
-                occurence = (best_entity.occurrences or 1) + (entity.occurrences or 1)
-                alternative_names = set(best_entity.alternative_names)
-                alternative_names.add(entity.name)
-
-                transferred_entities.append(entity.id_name)
-                cluster_translations[entity.id_name] = best_entity.id_name
-
-                logger.debug(f"Clustered {entity.id_name} into {best_entity.id_name}")
-                db_session.query(KGEntity).filter(
-                    KGEntity.id_name == best_entity.id_name
-                ).update(
-                    {
-                        "occurrences": occurence,
-                        "alternative_names": list(alternative_names),
-                    }
-                )
-                db_session.commit()
-        else:
-            remaining_grounded_entities.append(entity)
-
-    # transfer over the remaining unclustered entities
-    for entity in remaining_grounded_entities:
-        with get_session_with_current_tenant() as db_session:
-            added_entity = add_entity(
-                db_session,
-                KGStage.NORMALIZED,
-                entity_type=entity.entity_type_id_name,
-                name=entity.name,
-                document_id=None,
-                occurrences=entity.occurrences or 1,
-                attributes=entity.attributes,
-                alternative_names=entity.alternative_names or [],
-            )
-            if added_entity:
-                transferred_entities.append(added_entity.id_name)
-            db_session.commit()
+        transferred_entity_id_name = _transfer_one_grounded_entity(entity)
+        if transferred_entity_id_name:
+            transferred_entities.append(entity.id_name)
+            cluster_translations[entity.id_name] = transferred_entity_id_name
 
     ## Database operations
 
@@ -190,9 +187,7 @@ def kg_clustering(
                 target_entity_type=relationship_type.target_entity_type_id_name,
                 extraction_count=relationship_type.occurrences or 1,
             )
-
             db_session.commit()
-
             transferred_relationship_types.append(added_relationship_type_id_name)
 
     transferred_relationships: list[str] = []
@@ -229,9 +224,7 @@ def kg_clustering(
                     source_documents_w_successful_transfers.add(
                         relationship.source_document
                     )
-
                 db_session.commit()
-
                 transferred_relationships.append(relationship.id_name)
 
             except Exception as e:
@@ -249,6 +242,11 @@ def kg_clustering(
     # TODO: update Vespa info when clustering/changes are performed
 
     # delete the added objects from the staging tables
+
+    logger.info(f"Transfered {len(transferred_entities)} entities")
+    logger.info(f"Transfered {len(transferred_relationships)} relationships")
+    logger.info(f"Transfered {len(transferred_relationship_types)} relationship types")
+    0 / 0
 
     try:
         with get_session_with_current_tenant() as db_session:

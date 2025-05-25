@@ -81,7 +81,7 @@ def _normalize_one_entity(entity: str) -> str | None:
             list[tuple[str, str, float]],
             db_session.query(
                 KGEntity.id_name,
-                KGEntity.normalization_trigrams,
+                KGEntity.clustering_name,
                 (
                     # for each entity E, compute score = | Q ∩ E | / min(|Q|, |E|)
                     func.cardinality(
@@ -139,7 +139,7 @@ def _normalize_one_entity(entity: str) -> str | None:
 
         # combine the scores
         score = (1.0 - W_leven) * ngram_score + W_leven * leven_score
-        candidates[i] = (id_name, cleaned_candidate, score)
+        candidates[i] = (id_name, candidate, score)
 
     candidates = list(
         sorted(
