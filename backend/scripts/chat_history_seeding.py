@@ -6,7 +6,7 @@ from onyx.db.seeding.chat_history_seeding import seed_chat_history
 
 # Configure the logger
 logging.basicConfig(
-    level=logging.INFO,  # Set the log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Set the log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # Log format
     handlers=[logging.StreamHandler()],  # Output logs to console
 )

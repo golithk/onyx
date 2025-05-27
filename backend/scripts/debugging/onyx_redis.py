@@ -35,7 +35,7 @@ from shared_configs.contextvars import get_current_tenant_id
 
 # Configure the logger
 logging.basicConfig(
-    level=logging.INFO,  # Set the log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Set the log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # Log format
     handlers=[logging.StreamHandler()],  # Output logs to console
 )

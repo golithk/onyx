@@ -1,6 +1,6 @@
 services:
   api_server:
-    image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
+    image: onyxdotapp/onyx-api-backend:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile
@@ -83,7 +83,7 @@ services:
       # Leave this on pretty please? Nothing sensitive is collected!
       # https://docs.onyx.app/more/telemetry
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-debug} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
       # Log all of Onyx prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
@@ -139,7 +139,7 @@ services:
       - api_server_logs:/var/log
 
   background:
-    image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
+    image: onyxdotapp/onyx-background-backend:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile
@@ -240,7 +240,7 @@ services:
       # Leave this on pretty please? Nothing sensitive is collected!
       # https://docs.onyx.app/more/telemetry
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-debug} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
       # Log all of Onyx prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
@@ -312,7 +312,7 @@ services:
       - NEXT_PUBLIC_CUSTOM_REFRESH_URL=${NEXT_PUBLIC_CUSTOM_REFRESH_URL:-}
 
   inference_model_server:
-    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
+    image: onyxdotapp/onyx-model-inference-server:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile.model_server
@@ -327,7 +327,7 @@ services:
     environment:
       - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
       # Set to debug to get more fine-grained logs
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
 
       # Analytics Configs
       - SENTRY_DSN=${SENTRY_DSN:-}
@@ -343,7 +343,7 @@ services:
         max-file: "6"
 
   indexing_model_server:
-    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
+    image: onyxdotapp/onyx-model-indexing-server:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile.model_server
@@ -360,7 +360,7 @@ services:
       - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
       - INDEXING_ONLY=True
       # Set to debug to get more fine-grained logs
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
       - CLIENT_EMBEDDING_TIMEOUT=${CLIENT_EMBEDDING_TIMEOUT:-}
 
       # Analytics Configs

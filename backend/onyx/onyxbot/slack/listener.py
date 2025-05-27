@@ -436,6 +436,7 @@ class SlackbotHandler:
     def start_socket_client(
         self, slack_bot_id: int, tenant_id: str, slack_bot_tokens: SlackBotTokens
     ) -> None:
+        f"Starting socket client in Slack - Kaushik"
         socket_client: TenantSocketModeClient = _get_socket_client(
             slack_bot_tokens, tenant_id, slack_bot_id
         )
@@ -655,16 +656,16 @@ def prefilter_requests(req: SocketModeRequest, client: TenantSocketModeClient) -
         thread_ts = event.get("thread_ts")
         # Pick the root of the thread (if a thread exists)
         # Can respond in thread if it's an "im" directly to Onyx or @OnyxBot is tagged
-        if (
-            thread_ts
-            and message_ts != thread_ts
-            and event_type != "app_mention"
-            and event.get("channel_type") != "im"
-        ):
-            channel_specific_logger.debug(
-                "Skipping message since it is not the root of a thread"
-            )
-            return False
+        # if (
+        #     thread_ts
+        #     and message_ts != thread_ts
+        #     and event_type != "app_mention"
+        #     and event.get("channel_type") != "im"
+        # ):
+        #     channel_specific_logger.debug(
+        #         "Skipping message since it is not the root of a thread"
+        #     )
+        #     return False
 
         msg = cast(str, event.get("text", ""))
         if not msg:
@@ -936,6 +937,7 @@ def create_process_slack_event() -> (
     def process_slack_event(
         client: TenantSocketModeClient, req: SocketModeRequest
     ) -> None:
+        logger.debug(f"Received Slack event: {req.type} payload keys: {list(req.payload.keys())}")
         # Always respond right away, if Slack doesn't receive these frequently enough
         # it will assume the Bot is DEAD!!! :(
         acknowledge_message(req, client)
