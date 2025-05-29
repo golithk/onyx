@@ -611,6 +611,23 @@ def prefilter_requests(req: SocketModeRequest, client: TenantSocketModeClient) -
                 logger.info("Ignoring message from OnyxBot")
                 return False
 
+            message_ts = event.get("ts")
+            thread_ts = event.get("thread_ts")
+            is_thread = thread_ts is not None and thread_ts != message_ts
+
+            # DM: always respond (main or thread)
+            if is_dm:
+                pass  # Always respond in DMs
+            else:
+                # Channel message
+                if is_thread:
+                    # In a thread, only respond if tagged
+                    if not is_tagged:
+                        return False
+                else:
+                    # In main channel (not a thread), always respond
+                    pass
+
             # DMs with the bot don't pick up the @OnyxBot so we have to keep the
             # caught events_api
             if is_tagged and not is_dm:
