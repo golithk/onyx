@@ -243,6 +243,27 @@ def handle_regular_answer(
             onyx_user=user if can_search_over_private_docs else None,
         )
 
+    except RuntimeError as re:
+        if str(re).startswith("Last message alone is too large!"):
+            respond_in_thread_or_channel(
+                client=client,
+                channel=channel,
+                receiver_ids=target_receiver_ids,
+                text="This conversation has reached the AI bot’s message limit. Kindly begin a new thread.",
+                thread_ts=target_thread_ts,
+                send_as_ephemeral=send_as_ephemeral,
+            )
+            update_emote_react(
+                emoji=DANSWER_REACT_EMOJI,
+                channel=message_info.channel_to_respond,
+                message_ts=message_info.msg_to_respond,
+                remove=True,
+                client=client,
+            )
+            return True
+        else:
+            raise
+
     except Exception as e:
         logger.exception(
             f"Unable to process message - did not successfully answer "
